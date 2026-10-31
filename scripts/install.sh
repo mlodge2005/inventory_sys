@@ -15,7 +15,7 @@ python_ok
 if [[ "$ROOTLESS" == 0 ]]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y python3 python3-venv python3-pip sqlite3 ca-certificates
+  apt-get install -y python3 python3-venv python3-pip sqlite3 ca-certificates iproute2
   if ! node_ok; then
     apt-get install -y nodejs npm || true
     node_ok || die "Node.js 20 or newer is required to build the website. Install it from Debian packages if they are new enough. This installer does not configure a third-party Node repository and does not change other websites."

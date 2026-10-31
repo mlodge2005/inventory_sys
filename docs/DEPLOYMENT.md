@@ -8,7 +8,7 @@ This service is meant to sit beside other sites on the same Raspberry Pi. It ins
 - `/etc/systemd/system/cyberdeck-inventory.service`
 - `/usr/local/bin/inventory`
 
-It does not edit nginx, Caddy, other units, UFW, iptables, Tailscale, hostapd, or NetworkManager. It does not delete another process to free a port. If 8765 is taken, the first install picks the next free port from 8766 through 8799 and records it. Later installs keep the port already in the env file. If that port is later taken by something else, the installer stops and tells you to edit the file.
+The installer also installs `iproute2` when it is missing. `inventory qr` reads interface addresses from `ip addr` and does not assume the default route is the site address. It does not edit nginx, Caddy, other units, UFW, iptables, Tailscale, hostapd, or NetworkManager. It does not delete another process to free a port. If 8765 is taken, the first install picks the next free port from 8766 through 8799 and records it. Later installs keep the port already in the env file. If that port is later taken by something else, the installer stops and tells you to edit the file.
 
 ## Layout
 
