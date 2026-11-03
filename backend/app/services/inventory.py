@@ -346,7 +346,13 @@ class InventoryService:
     ) -> dict:
         number = self._check_slot_number(slot_number)
         if self._find_slot(number) is not None:
-            raise InventoryError("conflict", f"Drawer {number} already exists.", 409)
+            raise InventoryError(
+                "conflict",
+                f"Drawer {number} already exists. Choose another number.",
+                409,
+                field="slot_number",
+                guidance="Choose another number.",
+            )
         now = utcnow()
         slot = Slot(
             id=new_id(),
@@ -375,7 +381,13 @@ class InventoryService:
             if new_number != slot.slot_number:
                 other = self._find_slot(new_number)
                 if other is not None:
-                    raise InventoryError("conflict", f"Drawer {new_number} already exists.", 409)
+                    raise InventoryError(
+                        "conflict",
+                        f"Drawer {new_number} already exists. Choose another number.",
+                        409,
+                        field="slot_number",
+                        guidance="Choose another number.",
+                    )
                 old_number = slot.slot_number
                 slot.slot_number = new_number
                 self._audit(
@@ -490,9 +502,11 @@ class InventoryService:
         if row is None or have < qty:
             raise InventoryError(
                 "negative_stock",
-                f"Drawer {slot.slot_number} only has {have} {part.unit} of {part.name}.",
+                f"Cannot remove {qty} {part.name} from drawer {slot.slot_number}. Only {have} are available.",
                 409,
                 {"available": have, "requested": qty, "part_id": part.id, "slot_number": slot.slot_number},
+                field="quantity",
+                guidance=f"Only {have} are available.",
             )
         before = have
         after = have - qty
@@ -544,9 +558,11 @@ class InventoryService:
         if src_row is None or have < qty:
             raise InventoryError(
                 "negative_stock",
-                f"Drawer {source_slot.slot_number} only has {have} {part.unit} of {part.name}.",
+                f"Cannot remove {qty} {part.name} from drawer {source_slot.slot_number}. Only {have} are available.",
                 409,
-                {"available": have, "requested": qty},
+                {"available": have, "requested": qty, "part_id": part.id, "slot_number": source_slot.slot_number},
+                field="quantity",
+                guidance=f"Only {have} are available.",
             )
         dest_row = self._allocation(dest_slot.id, part.id, create=True)
         assert dest_row is not None
@@ -1119,7 +1135,7 @@ class InventoryService:
         if units > 0 and not confirm:
             raise InventoryError(
                 "not_empty",
-                f"Drawer {slot.slot_number} still holds {units} units. Transfer them or confirm removal.",
+                f"Drawer {slot.slot_number} still contains parts. Transfer or remove them before deleting it.",
                 409,
                 {
                     "total_units": units,
@@ -1128,6 +1144,8 @@ class InventoryService:
                         for allocation, part in rows
                     ],
                 },
+                field="slot_number",
+                guidance="Transfer or remove them before deleting it.",
             )
         for allocation, part in list(rows):
             if allocation.quantity > 0:
@@ -1153,7 +1171,14 @@ class InventoryService:
         number = self._check_slot_number(slot_number)
         slot = self._find_slot(number)
         if slot is None:
-            raise InventoryError("not_found", f"Drawer {number} was not found.", 404)
+            raise InventoryError(
+                "not_found",
+                f"Drawer {number} does not exist. Select an existing drawer or create a new one.",
+                404,
+                {"slot_number": number},
+                field="slot_number",
+                guidance="Select an existing drawer or create a new one.",
+            )
         return slot
 
     def _require_active_slot(self, slot_number: int) -> Slot:
@@ -1165,7 +1190,13 @@ class InventoryService:
     def _require_part(self, part_id: str) -> Part:
         part = self.session.get(Part, part_id)
         if part is None:
-            raise InventoryError("not_found", "Part was not found.", 404)
+            raise InventoryError(
+                "not_found",
+                "This part could not be found. It may have been deleted or archived.",
+                404,
+                field="part_id",
+                guidance="It may have been deleted or archived.",
+            )
         return part
 
     def _require_active_part(self, part_id: str) -> Part:
@@ -1202,7 +1233,7 @@ class InventoryService:
         if exclude_id:
             stmt = stmt.where(Part.id != exclude_id)
         if self.session.scalar(stmt) is not None:
-            raise InventoryError("conflict", f"SKU {sku} is already in use.", 409)
+            raise InventoryError("conflict", f"SKU {sku} is already in use.", 409, field="sku", guidance="Choose another SKU.")
 
     def _ensure_category_name(self, name: str, *, exclude_id: str | None = None) -> None:
         stmt = select(Category).where(func.lower(Category.name) == name.casefold())
@@ -1239,34 +1270,60 @@ class InventoryService:
         try:
             number = int(value)
         except (TypeError, ValueError) as exc:
-            raise InventoryError("validation_error", "Drawer number must be a positive integer.", 422) from exc
+            raise InventoryError(
+                "validation_error",
+                "Enter a drawer number. Select an existing drawer or create a new one.",
+                422,
+                field="slot_number",
+                guidance="Select an existing drawer or create a new one.",
+            ) from exc
         if number < 1 or number > MAX_SLOT_NUMBER:
             raise InventoryError(
                 "validation_error",
-                f"Drawer number must be between 1 and {MAX_SLOT_NUMBER}.",
+                f"Drawer number must be a whole number from 1 to {MAX_SLOT_NUMBER}.",
                 422,
+                field="slot_number",
+                guidance="Choose another number.",
             )
         return number
 
     def _check_quantity(self, value: int, *, allow_zero: bool) -> int:
         if isinstance(value, bool) or isinstance(value, float):
-            if isinstance(value, float) and value.is_integer():
+            if isinstance(value, float) and not isinstance(value, bool) and value.is_integer():
                 value = int(value)
             else:
                 raise InventoryError(
                     "validation_error",
-                    "Fractional quantities are not supported.",
+                    "Enter a whole number greater than zero." if not allow_zero else "Enter a whole number of zero or more.",
                     422,
+                    field="quantity",
+                    guidance="Enter a whole number greater than zero." if not allow_zero else "Enter a whole number of zero or more.",
                 )
         try:
             number = int(value)
         except (TypeError, ValueError) as exc:
-            raise InventoryError("validation_error", "Quantity must be a whole number.", 422) from exc
-        if number < 0 or (number == 0 and not allow_zero) or number > MAX_QUANTITY:
             raise InventoryError(
                 "validation_error",
-                "Quantity must be a nonnegative whole number within the supported range.",
+                "Enter a whole number greater than zero." if not allow_zero else "Enter a whole number of zero or more.",
                 422,
+                field="quantity",
+                guidance="Enter a whole number greater than zero." if not allow_zero else "Enter a whole number of zero or more.",
+            ) from exc
+        if number < 0 or (number == 0 and not allow_zero):
+            raise InventoryError(
+                "validation_error",
+                "Enter a whole number greater than zero." if not allow_zero else "Enter a whole number of zero or more.",
+                422,
+                field="quantity",
+                guidance="Enter a whole number greater than zero." if not allow_zero else "Enter a whole number of zero or more.",
+            )
+        if number > MAX_QUANTITY:
+            raise InventoryError(
+                "validation_error",
+                "That quantity is too large.",
+                422,
+                field="quantity",
+                guidance="Enter a smaller whole number.",
             )
         return number
 

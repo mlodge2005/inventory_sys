@@ -17,7 +17,7 @@ from app.api.docs_page import DOCS_CSS, render_docs
 from app.api.security import SecurityMiddleware
 from app.api.v1.router import router
 from app.core.config import Settings, get_settings
-from app.core.errors import InventoryError
+from app.core.errors import InventoryError, error_payload
 from app.db.session import make_engine, make_session_factory
 from app.services.network import detect_addresses, exposure_warnings
 
@@ -159,26 +159,41 @@ def _frontend_file(dist: Path, full_path: str) -> Response:
 
 
 async def _inventory_error(_request: Request, exc: InventoryError) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": {"code": exc.code, "message": exc.message, "details": exc.details}},
-    )
+    return JSONResponse(status_code=exc.status_code, content=error_payload(exc))
+
+
+def _validation_field(location: tuple) -> str | None:
+    parts = [str(part) for part in location if part not in {"body", "query", "path"}]
+    return parts[-1] if parts else None
+
+
+def _validation_message(field: str | None) -> tuple[str, str]:
+    if field in {"quantity", "new_quantity", "initial_quantity"} or (field or "").endswith("quantity"):
+        message = "Enter a whole number greater than zero."
+    elif field in {"slot_number", "from_slot", "to_slot"}:
+        message = "Enter a drawer number. Select an existing drawer or create a new one."
+    elif field == "name":
+        message = "Enter a name."
+    else:
+        message = "Check the highlighted field and try again."
+    return message, message
 
 
 async def _validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
     details = []
     for error in exc.errors():
-        item = dict(error)
-        ctx = item.get("ctx")
-        if isinstance(ctx, dict):
-            item["ctx"] = {key: str(value) for key, value in ctx.items()}
+        item = {"type": error.get("type"), "loc": error.get("loc"), "msg": error.get("msg")}
         details.append(item)
+    field = _validation_field(exc.errors()[0].get("loc", ())) if exc.errors() else None
+    message, guidance = _validation_message(field)
     return JSONResponse(
         status_code=422,
         content={
             "error": {
                 "code": "validation_error",
-                "message": "Invalid request.",
+                "message": message,
+                "field": field,
+                "guidance": guidance,
                 "details": {"errors": details},
             }
         },
@@ -186,10 +201,18 @@ async def _validation_error(_request: Request, exc: RequestValidationError) -> J
 
 
 async def _http_error(_request: Request, exc: HTTPException) -> JSONResponse:
-    message = exc.detail if isinstance(exc.detail, str) else "Request failed."
+    message = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": "http_error", "message": message, "details": {}}},
+        content={
+            "error": {
+                "code": "http_error",
+                "message": message,
+                "field": None,
+                "guidance": None,
+                "details": {},
+            }
+        },
     )
 
 
@@ -197,7 +220,15 @@ async def _unexpected_error(_request: Request, exc: Exception) -> JSONResponse:
     logger.exception("Unhandled error")
     return JSONResponse(
         status_code=500,
-        content={"error": {"code": "internal_error", "message": "Internal server error.", "details": {}}},
+        content={
+            "error": {
+                "code": "internal_error",
+                "message": "Cyberdeck Inventory could not complete that action. Try again in a moment.",
+                "field": None,
+                "guidance": None,
+                "details": {},
+            }
+        },
     )
 
 

@@ -20,7 +20,7 @@ export function useLoad<T>(loader: () => Promise<T>, deps: unknown[]) {
       })
       .catch((err: unknown) => {
         if (!live) return;
-        setError(err instanceof ApiError ? err.message : "Request failed.");
+        setError(err instanceof ApiError ? err.message : "Cannot connect to Cyberdeck Inventory. Check that the Raspberry Pi service is running.");
       })
       .finally(() => {
         if (live) setLoading(false);

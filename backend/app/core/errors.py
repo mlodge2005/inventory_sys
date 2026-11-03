@@ -10,12 +10,31 @@ class InventoryError(Exception):
         message: str,
         status_code: int = 400,
         details: dict | None = None,
+        *,
+        field: str | None = None,
+        guidance: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
         self.details = details or {}
+        self.field = field
+        self.guidance = guidance
+
+
+def error_payload(error: InventoryError) -> dict:
+    """JSON body for an inventory error. `field` and `guidance` may be null."""
+
+    return {
+        "error": {
+            "code": error.code,
+            "message": error.message,
+            "field": error.field,
+            "guidance": error.guidance,
+            "details": error.details,
+        }
+    }
 
 
 def exit_code_for(error: InventoryError) -> int:

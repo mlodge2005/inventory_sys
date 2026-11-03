@@ -7,6 +7,20 @@ export function ErrorNote({ message }: { message: string | null }) {
   );
 }
 
+export function Notice({ message }: { message: string | null }) {
+  if (!message) return null;
+  return (
+    <p className="success-banner" role="status">
+      {message}
+    </p>
+  );
+}
+
+export function FieldError({ message }: { message?: string | null }) {
+  if (!message) return null;
+  return <span className="field-error">{message}</span>;
+}
+
 export function Loading({ label = "Loading…" }: { label?: string }) {
   return <p className="muted">{label}</p>;
 }
