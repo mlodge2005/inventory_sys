@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, event, pool
 
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.permissions import ensure_sqlite_connection
 from app.models import entities  # noqa: F401
 
 config = context.config
@@ -43,6 +44,7 @@ def run_migrations_online() -> None:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
+        ensure_sqlite_connection(dbapi_connection)
 
     with connectable.connect() as connection:
         context.configure(

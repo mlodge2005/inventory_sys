@@ -20,6 +20,7 @@ PYTHONPATH="${INVENTORY_PYTHONPATH:-$CURRENT_LINK/backend}" \
   INVENTORY_DATABASE_PATH="$DB_PATH" \
   INVENTORY_ENVIRONMENT=production \
   "$python_bin" -m app.maintenance restore --backup "$backup" --database "$DB_PATH"
+fix_data_permissions
 start_service || true
 port="$(env_value INVENTORY_PORT)"
 port="${port:-$DEFAULT_PORT}"

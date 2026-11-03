@@ -92,6 +92,9 @@ if [[ -f "$ENV_FILE" ]]; then
   log "Keeping existing configuration in $ENV_FILE"
 else
   port="$(choose_port)"
+  # Restrict the env file only. Restore the previous umask before SQLite or
+  # Alembic runs, or the database is created mode 0600 and the CLI cannot open it.
+  saved_umask="$(umask)"
   umask 0077
   cat >"$ENV_FILE" <<EOF
 INVENTORY_ENVIRONMENT=production
@@ -106,6 +109,7 @@ INVENTORY_PUBLIC_URL=
 INVENTORY_GIT_REMOTE=${INVENTORY_GIT_REMOTE:-origin}
 INVENTORY_GIT_BRANCH=${INVENTORY_GIT_BRANCH:-main}
 EOF
+  umask "$saved_umask"
   if [[ "$ROOTLESS" == 0 ]]; then
     chown root:"$APP_GROUP" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
@@ -119,14 +123,7 @@ fi
 stop_service
 apply_migrations "$VENV_STAGING/bin/python" "$release"
 activate_release "$release" "$VENV_STAGING"
-write_serve_wrapper
-write_cli_wrapper
-install_unit
-
-if [[ "$ROOTLESS" == 0 ]]; then
-  chown -R "$APP_USER:$APP_GROUP" "$VAR_DIR"
-  systemctl daemon-reload
-fi
+publish_runtime
 start_service
 
 if ! wait_for_health "$port"; then
@@ -158,5 +155,7 @@ trusted networks yourself, for example:
   sudo ufw allow from 100.64.0.0/10 to any port PORT proto tcp
 
 Replace PORT with the value in the environment file. Open a new login so your
-user can use the inventory command as a member of the cyberdeck group.
+user can use the inventory command as a member of the cyberdeck group. The
+database, WAL, and shared-memory files are mode 0660 for that group. Re-running
+this installer repairs an older mode 0600 database without deleting it.
 EOF

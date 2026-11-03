@@ -387,11 +387,38 @@ rollback_release() {
   fi
 }
 
+# Own the data directory as the service account and make every database file
+# group-writable. Idempotent. Does not follow symlinks and does not touch the
+# env file, which stays outside this directory at mode 0640.
+fix_data_permissions() {
+  mkdir -p "$VAR_DIR" "$BACKUP_DIR"
+  if [[ "${ROOTLESS:-0}" == 0 ]]; then
+    chown --no-dereference "$APP_USER:$APP_GROUP" "$VAR_DIR"
+    find "$VAR_DIR" -xdev \( -type d -o -type f \) -print0 |
+      xargs -0 -r chown --no-dereference "$APP_USER:$APP_GROUP"
+  fi
+  find "$VAR_DIR" -xdev -type d -print0 | xargs -0 -r chmod 2770
+  find "$VAR_DIR" -xdev -type f -print0 | xargs -0 -r chmod 660
+}
+
+publish_runtime() {
+  write_serve_wrapper
+  write_cli_wrapper
+  install_unit
+  fix_data_permissions
+  if [[ "${ROOTLESS:-0}" == 0 ]]; then
+    systemctl daemon-reload
+  fi
+}
+
 write_serve_wrapper() {
   mkdir -p "$OPT_DIR/bin"
   cat >"$SERVE_BIN" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# SQLite requests mode 0644. This umask clears world bits. Group write is
+# applied with chmod 0660 after SQLite creates the database, WAL, and SHM.
+umask 0007
 set -a
 source "$ENV_FILE"
 set +a
@@ -407,6 +434,9 @@ write_cli_wrapper() {
   cat >"$BIN_DIR/inventory" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# Match the service umask so a WAL created by the CLI is not world-readable.
+# app.db.permissions then adds group write (mode 0660).
+umask 0007
 if [[ -f "$ENV_FILE" ]]; then
   set -a
   # shellcheck disable=SC1090
@@ -431,6 +461,7 @@ Type=simple
 EnvironmentFile=$ENV_FILE
 WorkingDirectory=$CURRENT_LINK/backend
 ExecStart=$SERVE_BIN
+UMask=0007
 [Install]
 WantedBy=multi-user.target
 EOF

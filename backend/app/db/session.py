@@ -15,7 +15,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
 from app.db.base import Base
+from app.db.permissions import ensure_database_permissions, ensure_sqlite_connection
 from app.db.seed import seed_reference_data
+
+
+def _dbapi_connection(connection: object) -> object:
+    raw = getattr(connection, "connection", connection)
+    return getattr(raw, "dbapi_connection", raw)
 
 
 def apply_sqlite_pragmas(engine: Engine, *, immediate: bool) -> None:
@@ -30,12 +36,17 @@ def apply_sqlite_pragmas(engine: Engine, *, immediate: bool) -> None:
         cursor.execute("PRAGMA busy_timeout=30000")
         cursor.execute("PRAGMA synchronous=FULL")
         cursor.close()
+        # WAL and SHM exist only while the connection is open. SQLite creates
+        # them as 0o644, so the umask cannot add the group-write bit.
+        ensure_sqlite_connection(dbapi_connection)
 
     if immediate:
 
         @event.listens_for(engine, "begin")
         def _begin(connection) -> None:  # noqa: ANN001
             connection.exec_driver_sql("BEGIN IMMEDIATE")
+            # A checkpoint can remove and recreate the WAL after connect.
+            ensure_sqlite_connection(_dbapi_connection(connection))
 
 
 def make_engine(path: Path, *, immediate: bool = True) -> Engine:
@@ -65,6 +76,7 @@ def init_database(settings: Settings, *, migrate: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if migrate:
         run_alembic_upgrade(settings)
+        ensure_database_permissions(path)
         return
     engine = make_engine(path, immediate=True)
     # Import models so they register on the metadata.
@@ -76,6 +88,7 @@ def init_database(settings: Settings, *, migrate: bool = False) -> None:
         seed_reference_data(session)
         session.commit()
     engine.dispose()
+    ensure_database_permissions(path)
 
 
 def run_alembic_upgrade(settings: Settings) -> None:
@@ -87,3 +100,4 @@ def run_alembic_upgrade(settings: Settings) -> None:
     cfg.set_main_option("script_location", str(backend_dir / "migrations"))
     cfg.set_main_option("sqlalchemy.url", settings.sqlalchemy_url)
     command.upgrade(cfg, "head")
+    ensure_database_permissions(settings.resolved_database_path)

@@ -61,6 +61,7 @@ stop_service
 apply_migrations "$VENV_STAGING/bin/python" "$release"
 schema_after="$(schema_of "$VENV_STAGING/bin/python" "$release")"
 activate_release "$release" "$VENV_STAGING"
+publish_runtime
 start_service
 
 if wait_for_health "$port"; then
@@ -88,6 +89,7 @@ if [[ "$action" == "rollback_release" && -n "$previous_release" ]]; then
   log "Schema revision is unchanged ($schema_before). Restoring the previous release."
   stop_service
   rollback_release "$previous_release"
+  publish_runtime
   start_service || true
   if wait_for_health "$port"; then
     log "Previous release is serving again. The failed release remains at $release."

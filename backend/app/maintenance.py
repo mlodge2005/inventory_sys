@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from app import __version__
 from app.core.config import get_settings
+from app.db.permissions import ensure_database_permissions, ensure_private_file, ensure_sqlite_connection
 
 
 def backup_database(source: Path, dest: Path) -> dict:
@@ -41,7 +43,11 @@ def backup_database(source: Path, dest: Path) -> dict:
         "sha256": digest,
         "integrity": integrity,
     }
-    dest.with_suffix(dest.suffix + ".json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    metadata_path = dest.with_suffix(dest.suffix + ".json")
+    metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    ensure_database_permissions(dest)
+    ensure_private_file(metadata_path)
+    _repair_source_permissions(source)
     return metadata
 
 
@@ -82,10 +88,14 @@ def restore_database(backup: Path, dest: Path) -> dict:
         for suffix in ("-wal", "-shm"):
             sidecar = Path(str(dest) + suffix)
             if sidecar.exists():
-                sidecar.replace(sidecar.with_name(sidecar.name + f".aside-{stamp}"))
+                aside = sidecar.with_name(sidecar.name + f".aside-{stamp}")
+                sidecar.replace(aside)
+                ensure_private_file(aside)
+        ensure_database_permissions(safety)
     staged.replace(dest)
     if integrity_check(dest) != "ok":
         raise RuntimeError("Restored database failed integrity check.")
+    ensure_database_permissions(dest)
     return {
         "database": str(dest),
         "safety_copy": str(safety) if safety else None,
@@ -100,6 +110,7 @@ def integrity_check(path: Path) -> str:
     try:
         connection.execute("PRAGMA busy_timeout=30000")
         row = connection.execute("PRAGMA integrity_check").fetchone()
+        ensure_sqlite_connection(connection)
         return str(row[0]) if row else "missing"
     finally:
         connection.close()
@@ -113,11 +124,28 @@ def schema_revision(path: Path) -> str | None:
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         if "alembic_version" not in tables:
+            ensure_sqlite_connection(connection)
             return None
         row = connection.execute("SELECT version_num FROM alembic_version").fetchone()
+        ensure_sqlite_connection(connection)
         return str(row[0]) if row else None
     finally:
         connection.close()
+
+
+def _repair_source_permissions(source: Path) -> None:
+    """Repair the live database when this process owns it.
+
+    A group member can still copy a database they are allowed to read. They
+    cannot chmod a file owned by the service account, and that must not fail
+    a backup that already succeeded.
+    """
+
+    try:
+        ensure_database_permissions(source)
+    except PermissionError:
+        if source.exists() and source.stat().st_uid == os.geteuid():
+            raise
 
 
 def sha256_file(path: Path) -> str:
