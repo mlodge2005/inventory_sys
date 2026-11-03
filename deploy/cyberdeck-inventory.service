@@ -1,0 +1,35 @@
+[Unit]
+Description=Cyberdeck Inventory
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cyberdeck
+Group=cyberdeck
+EnvironmentFile=/etc/cyberdeck-inventory.env
+WorkingDirectory=/opt/cyberdeck-inventory/current/backend
+ExecStart=/opt/cyberdeck-inventory/bin/serve
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/cyberdeck-inventory
+# UMask=0007 clears world bits on files created as 0666, which yields 0660.
+# SQLite requests 0644, so this umask alone yields 0640 (group read, no group
+# write). The application chmods the database, WAL, and SHM to 0660 after
+# SQLite creates them. Do not use 0022: that leaves the database world-readable.
+UMask=0007
+# MemoryDenyWriteExecute is intentionally omitted. CPython needs to write
+# executable pages, and setting it prevents the service from starting.
+
+[Install]
+WantedBy=multi-user.target

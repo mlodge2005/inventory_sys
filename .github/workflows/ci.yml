@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Python dependencies
+        run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt -r backend/requirements-cli.txt
+      - name: Backend and CLI tests
+        run: python -m pytest
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend tests and production build
+        working-directory: frontend
+        run: npm ci && npm test && npm run typecheck && npm run build
+
+  deployment-scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Script safety and update recovery
+        run: pip install -r backend/requirements.txt && bash scripts/tests/test_deploy.sh

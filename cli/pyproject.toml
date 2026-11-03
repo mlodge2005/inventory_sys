@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyberdeck-inventory-cli"
+version = "1.0.0"
+description = "Terminal interface for Cyberdeck Inventory"
+requires-python = ">=3.11"
+dependencies = [
+    "typer==0.27.3",
+    "rich==15.0.0",
+]
+
+[project.scripts]
+inventory = "inventory_cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["inventory_cli*"]

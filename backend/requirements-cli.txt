@@ -1,0 +1,3 @@
+# CLI runtime pins. Installed into the same virtualenv as the backend.
+typer==0.27.3
+rich==15.0.0
