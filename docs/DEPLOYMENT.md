@@ -67,4 +67,19 @@ Run `install.sh` again. An existing env file and database are kept. Migrations r
 
 ## Permissions
 
-The data directory is `2770` and owned by `cyberdeck:cyberdeck`. SQLite's WAL and SHM files inherit the group. After installation, log in again before using `inventory` over SSH.
+| Path | Owner | Mode |
+| --- | --- | --- |
+| `/var/lib/cyberdeck-inventory` | `cyberdeck:cyberdeck` | `2770` |
+| `/var/lib/cyberdeck-inventory/backups` | `cyberdeck:cyberdeck` | `2770` |
+| `inventory.db` | `cyberdeck:cyberdeck` | `0660` |
+| `inventory.db-wal`, `inventory.db-shm`, `inventory.db-journal` | `cyberdeck:cyberdeck` | `0660` |
+| Backup `*.db` files and the `.json` metadata beside them | `cyberdeck:cyberdeck` | `0660` |
+| `/etc/cyberdeck-inventory.env` | `root:cyberdeck` | `0640` |
+
+`2770` means the service account and the `cyberdeck` group can read, write, and search the directory. The setgid bit puts new files in group `cyberdeck`. `0660` means the owner and that group can read and write the file. No other user can read or write the directory, the database, the WAL, the shared-memory file, or a backup.
+
+SQLite creates the database, WAL, and shared-memory files with mode `0644`. A process umask can only remove bits, so it cannot add group write. `UMask=0007` therefore leaves those files at `0640` (group read, no group write). `umask 0077`, which the installer used to leave in effect while creating the database, leaves them at `0600`. That is the failure on an existing Pi: `cyberdeck-inventory.service` runs as `cyberdeck` and can open the file, while `admin` is only in the group and cannot. The unit and the `serve` and `inventory` wrappers still set umask `0007`, so files this process creates are not world-readable. `app.db.permissions` then sets mode `0660` after SQLite creates or reopens the database and its sidecar files.
+
+`scripts/install.sh`, `scripts/update.sh`, and `scripts/restore.sh` run `fix_data_permissions`, which is safe to repeat. It chowns the data directory to `cyberdeck:cyberdeck`, sets directories to `2770`, and sets regular files under that directory to `0660`. It does not follow symlinks out of the directory and does not change `/etc/cyberdeck-inventory.env`. Restarting the service repairs the same files when the service account owns them. None of these paths delete inventory rows.
+
+`admin` still has to be in group `cyberdeck` and has to log in again after that membership is added. Do not run the `inventory` command as root.

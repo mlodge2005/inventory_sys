@@ -9,7 +9,7 @@ inventory CLI --------------------+
 CSV import -----------------------+
 ```
 
-The CLI opens the database itself. It keeps working when the web process is stopped, as long as the file is readable by the `cyberdeck` group. Do not run the CLI and a manual SQLite editor at the same time; the application already serializes writers with `BEGIN IMMEDIATE`.
+The CLI opens the database itself and keeps working while the web process is stopped. The account must be in the `cyberdeck` group, and the database, WAL, and shared-memory files must be mode `0660`. Do not run the CLI and a manual SQLite editor at the same time; the application already serializes writers with `BEGIN IMMEDIATE`.
 
 ## Processes
 

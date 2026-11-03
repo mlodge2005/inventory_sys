@@ -2,6 +2,12 @@
 
 SQLite file, WAL mode, `synchronous=FULL`, `busy_timeout=30000`, foreign keys on. The production path is `/var/lib/cyberdeck-inventory/inventory.db`. The repository does not contain a database.
 
+## Permissions
+
+The data directory is mode `2770`, owner `cyberdeck:cyberdeck`. The database and its `-wal`, `-shm`, and `-journal` files are mode `0660` with the same owner and group. Backups and their `.json` metadata use `0660` as well. Nothing in this tree is world-readable or world-writable.
+
+SQLite requests mode `0644` for those files. Umask `0007` can only turn that into `0640`, and umask `0077` turns it into `0600`. Group write has to be added after SQLite creates the file. The service does that on every connection, and `scripts/install.sh`, `scripts/update.sh`, and `scripts/restore.sh` do it again so an existing installation is repaired without deleting rows. A member of group `cyberdeck` can then open the database with `inventory`. The account still has to log in again after being added to the group. Do not run the CLI as root to get around a mode `0600` file; restart `cyberdeck-inventory.service` or re-run the installer so the file owner can change the mode.
+
 Alembic revision `262e4fbd99ff` creates the tables, the case-insensitive unique indexes, and the reference rows (nine categories and one settings row). It does not insert parts. `scripts/update.sh` and `scripts/install.sh` back up with SQLite's backup API before migrating, then run `PRAGMA integrity_check`.
 
 ## Tables

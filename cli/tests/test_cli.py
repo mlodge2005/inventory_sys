@@ -30,6 +30,21 @@ def database(tmp_path, monkeypatch):
     return path
 
 
+def test_status_explains_unrepairable_database_permissions(database, monkeypatch):
+    database.chmod(0o600)
+    database.parent.chmod(0o2770)
+
+    def deny(*_args, **_kwargs):
+        raise OSError("denied")
+
+    monkeypatch.setattr("app.db.permissions.os.chmod", deny)
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code != 0
+    assert "0660" in result.output
+    assert "root" in result.output.lower()
+    assert database.stat().st_size > 0
+
+
 def test_help_and_status(database):
     help_result = runner.invoke(app, ["help"])
     assert help_result.exit_code == 0

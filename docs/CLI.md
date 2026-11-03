@@ -2,7 +2,7 @@
 
 The command is `inventory`. After installation it is on `/usr/local/bin/inventory` and uses the same `InventoryService` as the website. It reads `/etc/cyberdeck-inventory.env`, so it sees the production database even when you do not pass a URL.
 
-Your user must be in the `cyberdeck` group. The installer adds the user who ran `sudo`. Log out and back in once so the group applies. A permission error on the database usually means that new login has not happened yet.
+Your user must be in the `cyberdeck` group. The installer adds the user who ran `sudo`. Log out and back in once so the group applies. The database, WAL, and shared-memory files must be mode `0660` and group `cyberdeck`. Membership alone is not enough when those files are still mode `0600`: restart `cyberdeck-inventory.service`, or re-run `scripts/install.sh` or `scripts/update.sh`, and the file owner repairs them in place. Do not run `inventory` as root.
 
 With no arguments in an interactive terminal, a menu opens:
 
