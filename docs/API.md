@@ -12,7 +12,7 @@ Content-Type: application/json
 If the browser sends `Origin`, it must match the request host or `INVENTORY_ALLOWED_ORIGINS`. Errors use one envelope:
 
 ```json
-{"error": {"code": "negative_stock", "message": "Quantity cannot go below zero.", "details": {}}}
+{"error": {"code": "negative_stock", "message": "Cannot remove 15 screws from drawer 110. Only 8 are available.", "field": "quantity", "guidance": "Only 8 are available.", "details": {}}}
 ```
 
 List responses are `{ "items", "total", "limit", "offset" }`. `limit` is at most 100 except low-stock, which allows 500.

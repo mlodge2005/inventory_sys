@@ -103,6 +103,8 @@ def test_add_remove_ambiguity_and_transfer(database):
     assert "M3 nut" in still.output
     missing = runner.invoke(app, ["slot", "999"])
     assert missing.exit_code == 3
+    assert "Drawer 999 does not exist" in missing.output
+    assert "Traceback" not in missing.output
     invalid = runner.invoke(app, ["slot", "abc"])
     assert invalid.exit_code == 2
     baseline = runner.invoke(app, ["part", "baseline", "M3-SCREW", "--initial", "80"])

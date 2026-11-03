@@ -31,9 +31,16 @@ def _guard(function):
             return function(*args, **kwargs)
         except InventoryError as exc:
             console.print(exc.message)
+            if exc.guidance and exc.guidance not in exc.message:
+                console.print(exc.guidance)
             for match in exc.details.get("matches") or []:
                 console.print(f"  {match.get('sku') or '-'}  {match.get('name')}")
             raise typer.Exit(code=exit_code_for(exc)) from exc
+        except typer.Exit:
+            raise
+        except Exception:
+            console.print("Cannot complete that action. Check the values and try again.")
+            raise typer.Exit(code=1) from None
 
     return wrapper
 
@@ -167,9 +174,15 @@ def slot_cmd(
                 confirm_remove_stock=confirm_remove_stock,
                 reason="Deleted from CLI",
             )
-            console.print(f"Deleted drawer {tokens[1]}.")
+            console.print("Drawer deleted successfully.")
             return
-    raise InventoryError("validation_error", "Usage: inventory slot 110 | create NUMBER | edit NUMBER", 422)
+    raise InventoryError(
+        "validation_error",
+        "Enter a drawer number, or use create, edit, archive, or delete.",
+        422,
+        field="slot_number",
+        guidance="Select an existing drawer or create a new one.",
+    )
 
 
 @app.command("add")

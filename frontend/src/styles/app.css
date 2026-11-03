@@ -132,7 +132,30 @@ th { color: var(--muted); font-weight: 600; font-size: 0.8rem; }
   padding: 0.7rem 0.8rem;
 }
 .error-banner { background: var(--surface); background: color-mix(in srgb, var(--danger) 16%, var(--surface)); border: 1px solid var(--danger); }
+.success-banner { border-radius: 10px; padding: 0.7rem 0.8rem; background: var(--surface); background: color-mix(in srgb, var(--ok) 16%, var(--surface)); border: 1px solid var(--ok); }
 .note { background: var(--surface); background: color-mix(in srgb, var(--info) 12%, var(--surface)); border: 1px solid var(--border); }
+.field-error { color: var(--danger); font-size: 0.85rem; }
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0.75rem;
+}
+.modal {
+  width: min(40rem, 100%);
+  max-height: min(90vh, 48rem);
+  overflow: auto;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 35%, transparent);
+}
 .actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .skip-link {
   position: absolute;
@@ -147,6 +170,10 @@ th { color: var(--muted); font-weight: 600; font-size: 0.8rem; }
 .swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; }
 .preview-card { border: 1px dashed var(--border); border-radius: 12px; padding: 0.8rem; background: var(--bg); }
 html[data-density="compact"] td, html[data-density="compact"] th { padding: 0.3rem 0.45rem; }
+
+@media (min-width: 721px) {
+  .modal-backdrop { align-items: center; }
+}
 
 @media (max-width: 720px) {
   .side-nav { display: none; }

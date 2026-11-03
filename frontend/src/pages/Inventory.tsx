@@ -1,10 +1,11 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { ErrorNote, Loading, drawerList } from "../components/Feedback";
+import { DrawerSelect } from "../components/DrawerSelect";
+import { ErrorNote, FieldError, Loading, Notice, drawerList } from "../components/Feedback";
 import { StatusBadge } from "../components/StatusBadge";
 import { useLoad } from "../hooks/useLoad";
-import { api, itemsQuery } from "../services/api";
-import type { Category, Page, Part } from "../types";
+import { api, ApiError, itemsQuery, loadDrawers } from "../services/api";
+import type { Category, Page, Part, SlotDetail, SlotSummary } from "../types";
 
 export function InventoryPage() {
   const [params, setParams] = useSearchParams();
@@ -161,50 +162,124 @@ export function InventoryPage() {
 
 function CreatePart({ onCreated, categories }: { onCreated: () => void; categories: Category[] }) {
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [baseline, setBaseline] = useState("0");
   const [categoryId, setCategoryId] = useState("");
-  const [slot, setSlot] = useState("");
-  const [qty, setQty] = useState("");
+  const [rows, setRows] = useState<{ slot: string; quantity: string }[]>([]);
+  const [drawers, setDrawers] = useState<SlotSummary[]>([]);
+  const [creatingDrawer, setCreatingDrawer] = useState(false);
+  const [newNumber, setNewNumber] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [drawerError, setDrawerError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    loadDrawers()
+      .then((items) => {
+        if (live) setDrawers(items);
+      })
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof ApiError ? err.message : "Could not load drawers.");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  function chosenNumbers(exceptIndex?: number): string[] {
+    return rows.flatMap((row, index) => (index !== exceptIndex && row.slot ? [row.slot] : []));
+  }
+
+  const allocationProblems = rows.map((row) => {
+    if (!row.slot && !row.quantity.trim()) return null;
+    if (!row.slot) return "Select an existing drawer or create a new one.";
+    if (!/^\d+$/.test(row.quantity.trim()) || Number(row.quantity) <= 0) return "Enter a whole number greater than zero.";
+    return null;
+  });
+  const allocationsReady = allocationProblems.every((problem) => problem === null);
+  const baselineOk = /^\d+$/.test(baseline.trim());
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setFieldErrors({});
+    setNotice(null);
+    if (!name.trim() || !baselineOk || !allocationsReady) return;
     const initial = Number(baseline);
-    if (!Number.isInteger(initial) || initial < 0) {
-      setError("Baseline must be a whole number.");
-      return;
-    }
     const body: Record<string, unknown> = {
       name: name.trim(),
       sku: sku.trim() || null,
       initial_quantity: initial,
       category_id: categoryId || null,
     };
-    if (slot && qty) {
-      const quantity = Number(qty);
-      if (!Number.isInteger(quantity) || quantity <= 0) {
-        setError("Allocation quantity must be a positive whole number.");
-        return;
-      }
-      body.allocations = [{ slot_number: Number(slot), quantity }];
-    }
+    const allocations = rows
+      .filter((row) => row.slot && Number(row.quantity) > 0)
+      .map((row) => ({ slot_number: Number(row.slot), quantity: Number(row.quantity) }));
+    if (allocations.length) body.allocations = allocations;
     try {
       await api("/api/v1/items", { method: "POST", body: JSON.stringify(body) });
       setName("");
       setSku("");
-      setSlot("");
-      setQty("");
+      setBaseline("0");
+      setRows([]);
+      setNotice("Part created. The baseline was stored separately from drawer quantities.");
       onCreated();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create the part.");
+      const message = err instanceof ApiError ? err.message : "Could not create the part.";
+      if (err instanceof ApiError && err.field) setFieldErrors({ [err.field]: message });
+      setError(message);
+    }
+  }
+
+  async function createDrawer() {
+    setDrawerError(null);
+    const drawerNumber = Number(newNumber);
+    if (!Number.isInteger(drawerNumber) || drawerNumber <= 0) {
+      setDrawerError("Enter a whole number greater than zero.");
+      return;
+    }
+    try {
+      const created = await api<SlotDetail>("/api/v1/slots", {
+        method: "POST",
+        body: JSON.stringify({ slot_number: drawerNumber, label: newLabel.trim() || null }),
+      });
+      const summary: SlotSummary = {
+        id: created.id,
+        slot_number: created.slot_number,
+        label: created.label,
+        location: created.location,
+        total_units: created.total_units,
+        part_count: created.items.length,
+        archived_at: created.archived_at,
+      };
+      setDrawers((current) => [...current, summary].sort((left, right) => left.slot_number - right.slot_number));
+      setRows((current) => {
+        const next = [...current];
+        const target = next.findIndex((row) => !row.slot);
+        if (target === -1) {
+          next.push({ slot: String(created.slot_number), quantity: "" });
+          return next;
+        }
+        next[target] = { ...next[target], slot: String(created.slot_number) };
+        return next;
+      });
+      setNewNumber("");
+      setNewLabel("");
+      setCreatingDrawer(false);
+      setNotice(`Drawer ${created.slot_number} created. The part form was kept.`);
+    } catch (err) {
+      setDrawerError(err instanceof ApiError ? err.message : "Could not create the drawer.");
     }
   }
 
   return (
     <form className="card stack" onSubmit={onSubmit}>
       <h2>New part</h2>
+      <p className="muted">The baseline is the alert reference. Drawer quantities are the physical stock and do not change the baseline.</p>
+      <Notice message={notice} />
       <ErrorNote message={error} />
       <div className="row">
         <label className="field">
@@ -214,10 +289,12 @@ function CreatePart({ onCreated, categories }: { onCreated: () => void; categori
         <label className="field">
           SKU
           <input aria-label="New part SKU" value={sku} onChange={(event) => setSku(event.target.value)} />
+          <FieldError message={fieldErrors.sku} />
         </label>
         <label className="field">
           Baseline
           <input aria-label="Baseline quantity" inputMode="numeric" value={baseline} onChange={(event) => setBaseline(event.target.value)} />
+          <FieldError message={baseline.trim() && !baselineOk ? "Enter a whole number of zero or more." : null} />
         </label>
         <label className="field">
           Category
@@ -230,16 +307,79 @@ function CreatePart({ onCreated, categories }: { onCreated: () => void; categori
             ))}
           </select>
         </label>
-        <label className="field">
-          Allocate to drawer
-          <input aria-label="Allocation drawer" inputMode="numeric" value={slot} onChange={(event) => setSlot(event.target.value)} />
-        </label>
-        <label className="field">
-          Allocate quantity
-          <input aria-label="Allocation quantity" inputMode="numeric" value={qty} onChange={(event) => setQty(event.target.value)} />
-        </label>
       </div>
-      <button className="btn-primary" type="submit">
+      <div className="stack">
+        <h3>Drawers</h3>
+        {rows.length === 0 ? <p className="muted">Leave this empty to create the part without stock.</p> : null}
+        {drawers.length === 0 ? <p>No drawers exist yet. Create a drawer to assign this part.</p> : null}
+        {rows.map((row, index) => (
+          <div className="row" key={`allocation-${index}`}>
+            <DrawerSelect
+              label={`Allocate to drawer ${index + 1}`}
+              value={row.slot}
+              slots={drawers}
+              exclude={chosenNumbers(index)}
+              announceEmpty={false}
+              error={allocationProblems[index] && row.slot ? null : allocationProblems[index]}
+              onChange={(slot) =>
+                setRows((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, slot } : item)))
+              }
+            />
+            <label className="field">
+              Allocate quantity
+              <input
+                aria-label={`Allocation quantity ${index + 1}`}
+                inputMode="numeric"
+                value={row.quantity}
+                onChange={(event) =>
+                  setRows((current) => current.map((item, itemIndex) => (itemIndex === index ? { ...item, quantity: event.target.value } : item)))
+                }
+              />
+              <FieldError message={row.slot ? allocationProblems[index] : null} />
+            </label>
+            <button
+              type="button"
+              onClick={() => setRows((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+            >
+              Remove drawer
+            </button>
+          </div>
+        ))}
+        <div className="actions">
+          <button type="button" onClick={() => setRows((current) => [...current, { slot: "", quantity: "" }])}>
+            Add drawer
+          </button>
+          <button type="button" onClick={() => setCreatingDrawer(true)}>
+            Create Drawer
+          </button>
+        </div>
+      </div>
+      {creatingDrawer ? (
+        <div className="modal-backdrop">
+          <div className="modal stack" role="dialog" aria-modal="true" aria-labelledby="inline-drawer-title">
+            <h2 id="inline-drawer-title">Create Drawer</h2>
+            <p className="muted">The part name and other fields stay as you entered them.</p>
+            <ErrorNote message={drawerError} />
+            <label className="field">
+              Number
+              <input aria-label="Inline drawer number" inputMode="numeric" value={newNumber} onChange={(event) => setNewNumber(event.target.value)} />
+            </label>
+            <label className="field">
+              Label
+              <input aria-label="Inline drawer label" value={newLabel} onChange={(event) => setNewLabel(event.target.value)} />
+            </label>
+            <div className="actions">
+              <button type="button" onClick={() => setCreatingDrawer(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-primary" disabled={!newNumber.trim()} onClick={() => void createDrawer()}>
+                Create drawer
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <button className="btn-primary" type="submit" disabled={!name.trim() || !baselineOk || !allocationsReady}>
         Create part
       </button>
     </form>
