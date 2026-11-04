@@ -89,6 +89,14 @@ describe("inventory page", () => {
         const url = String(input);
         calls.push(url);
         if (url.includes("/categories")) return jsonResponse([{ id: "cat-1", name: "Fasteners", description: null, color: null }]);
+        if (url.includes("/slots")) {
+          return jsonResponse({
+            items: [{ id: "slot-1", slot_number: 110, label: "M3 Fasteners", location: null, total_units: 5, part_count: 1, archived_at: null }],
+            total: 1,
+            limit: 100,
+            offset: 0,
+          });
+        }
         const page: Page<Part> = { items: url.includes("search=M3") ? [part] : [part], total: 1, limit: 25, offset: 0 };
         return jsonResponse(page);
       }),
@@ -113,6 +121,7 @@ describe("inventory page", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const url = String(input);
         if (url.includes("/categories")) return jsonResponse([]);
+        if (url.includes("/slots")) return jsonResponse({ items: [], total: 0, limit: 100, offset: 0 });
         return jsonResponse({ error: { code: "internal_error", message: "Database busy" } }, 500);
       }),
     );
@@ -138,6 +147,15 @@ describe("stock form", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
+        if (url.includes("/slots")) {
+          return jsonResponse({
+            items: [{ id: "slot-1", slot_number: 110, label: "M3 Fasteners", location: null, total_units: 5, part_count: 1, archived_at: null }],
+            total: 1,
+            limit: 100,
+            offset: 0,
+          });
+        }
+        if (url.includes("/items/part-1")) return jsonResponse(part);
         if (url.includes("/items")) {
           return jsonResponse({ items: [part], total: 1, limit: 8, offset: 0 });
         }
@@ -158,6 +176,45 @@ describe("stock form", () => {
     expect(calls).toBe(1);
     release(jsonResponse({ id: "txn" }));
     await waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the quantity when removal is rejected", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/slots")) {
+          return jsonResponse({
+            items: [{ id: "slot-1", slot_number: 110, label: "M3 Fasteners", location: null, total_units: 5, part_count: 1, archived_at: null }],
+            total: 1,
+            limit: 100,
+            offset: 0,
+          });
+        }
+        if (url.includes("/items/part-1")) return jsonResponse(part);
+        if (init?.method === "POST") {
+          return jsonResponse(
+            {
+              error: {
+                code: "negative_stock",
+                message: "Cannot remove 15 M3 screw from drawer 110. Only 8 are available.",
+                field: "quantity",
+              },
+            },
+            409,
+          );
+        }
+        return jsonResponse({ items: [], total: 0, limit: 8, offset: 0 });
+      }),
+    );
+    render(<StockForm presetPartId="part-1" presetSlot={110} onDone={vi.fn()} />);
+    await user.type(screen.getByLabelText("Quantity"), "5");
+    expect(await screen.findByText("Available in this drawer: 5")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm stock change" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Cannot remove 15 M3 screw from drawer 110. Only 8 are available.");
+    expect(screen.getByLabelText("Quantity")).toHaveValue("5");
     vi.unstubAllGlobals();
   });
 });
@@ -190,6 +247,177 @@ describe("drawers", () => {
     await user.type(screen.getByLabelText("New drawer number"), "110");
     await user.click(screen.getByRole("button", { name: "Create drawer" }));
     expect(posted[0]).toContain("110");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("drawer editing and part allocation", () => {
+  const drawer = {
+    id: "slot-1",
+    slot_number: 110,
+    label: "M3 Fasteners",
+    description: "Left side",
+    location: "Bench",
+    archived_at: null,
+    items: [{ part_id: "part-1", name: "M3 screw", sku: "M3-SCREW", unit: "pcs", quantity: 5 }],
+    total_units: 5,
+  };
+
+  it("edits a drawer, refuses a occupied delete, and deletes an empty drawer", async () => {
+    const user = userEvent.setup();
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ url, method: init?.method, body: init?.body ? String(init.body) : undefined });
+        if (init?.method === "PATCH") {
+          return jsonResponse({ ...drawer, slot_number: 210, label: "Renamed", id: "slot-1" });
+        }
+        if (init?.method === "DELETE") return jsonResponse({ deleted: true });
+        if (url.endsWith("/slots/110")) return jsonResponse(drawer);
+        return jsonResponse({
+          items: [{ id: "slot-1", slot_number: 110, label: "M3 Fasteners", location: "Bench", total_units: 5, part_count: 1, archived_at: null }],
+          total: 1,
+          limit: 100,
+          offset: 0,
+        });
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <DrawersPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Edit" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Contents" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Drawer 110 still contains parts");
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Edit" }));
+    const number = await screen.findByLabelText("Edit drawer number");
+    expect(number).toHaveValue("110");
+    await user.clear(number);
+    await user.type(number, "210");
+    await user.clear(screen.getByLabelText("Edit label"));
+    await user.type(screen.getByLabelText("Edit label"), "Renamed");
+    await user.click(screen.getByRole("button", { name: "Save drawer" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Drawer 210 saved.");
+    expect(calls.some((call) => call.method === "PATCH" && call.body?.includes("210"))).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("confirms deletion of an empty drawer", async () => {
+    const user = userEvent.setup();
+    const methods: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        methods.push(init?.method ?? "GET");
+        if (init?.method === "DELETE") return jsonResponse({ deleted: true });
+        return jsonResponse({
+          items: [{ id: "slot-9", slot_number: 9, label: null, location: null, total_units: 0, part_count: 0, archived_at: null }],
+          total: 1,
+          limit: 100,
+          offset: 0,
+        });
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <DrawersPage />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Drawer deleted successfully.");
+    expect(methods).toContain("DELETE");
+    vi.unstubAllGlobals();
+  });
+
+  it("fills drawer choices, keeps the part form, and submits several drawers", async () => {
+    const user = userEvent.setup();
+    const posted: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/categories")) return jsonResponse([{ id: "cat-1", name: "Fasteners", description: null, color: null }]);
+        if (init?.method === "POST" && url.endsWith("/slots")) {
+          return jsonResponse({
+            id: "slot-new",
+            slot_number: 210,
+            label: "Spare",
+            description: null,
+            location: null,
+            archived_at: null,
+            items: [],
+            total_units: 0,
+          });
+        }
+        if (init?.method === "POST" && url.endsWith("/items")) {
+          posted.push(String(init.body));
+          return jsonResponse({ error: { code: "conflict", message: "SKU M3 is already in use.", field: "sku" } }, 409);
+        }
+        if (url.includes("/slots")) {
+          return jsonResponse({
+            items: [{ id: "slot-1", slot_number: 110, label: "M3 Fasteners", location: null, total_units: 0, part_count: 0, archived_at: null }],
+            total: 1,
+            limit: 100,
+            offset: 0,
+          });
+        }
+        return jsonResponse({ items: [], total: 0, limit: 25, offset: 0 });
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <InventoryPage />
+      </MemoryRouter>,
+    );
+    await user.type(screen.getByLabelText("New part name"), "Kept screw");
+    await user.click(screen.getByRole("button", { name: "Add drawer" }));
+    expect(await screen.findByRole("option", { name: "110 — M3 Fasteners" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Allocate to drawer 1"), "110");
+    await user.type(screen.getByLabelText("Allocation quantity 1"), "4");
+    await user.click(screen.getByRole("button", { name: "Add drawer" }));
+    const second = screen.getByLabelText("Allocate to drawer 2") as HTMLSelectElement;
+    expect([...second.options].map((option) => option.value)).not.toContain("110");
+    await user.click(screen.getByRole("button", { name: "Create Drawer" }));
+    await user.type(screen.getByLabelText("Inline drawer number"), "210");
+    await user.type(screen.getByLabelText("Inline drawer label"), "Spare");
+    await user.click(screen.getByRole("button", { name: "Create drawer" }));
+    expect(await screen.findByRole("option", { name: "210 — Spare" })).toBeInTheDocument();
+    expect(screen.getByLabelText("New part name")).toHaveValue("Kept screw");
+    expect(screen.getByLabelText("Allocate to drawer 2")).toHaveValue("210");
+    await user.type(screen.getByLabelText("Allocation quantity 2"), "6");
+    await user.click(screen.getByRole("button", { name: "Create part" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("SKU M3 is already in use.");
+    expect(screen.getByLabelText("New part name")).toHaveValue("Kept screw");
+    expect(screen.getByLabelText("Allocation quantity 1")).toHaveValue("4");
+    expect(posted[0]).toContain('"slot_number":110');
+    expect(posted[0]).toContain('"slot_number":210');
+    expect(posted[0]).toContain('"initial_quantity":0');
+    vi.unstubAllGlobals();
+  });
+
+  it("says when no drawers exist yet", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/categories")) return jsonResponse([]);
+        if (url.includes("/slots")) return jsonResponse({ items: [], total: 0, limit: 100, offset: 0 });
+        return jsonResponse({ items: [], total: 0, limit: 25, offset: 0 });
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <InventoryPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("No drawers exist yet. Create a drawer to assign this part.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create part" })).toBeDisabled();
     vi.unstubAllGlobals();
   });
 });

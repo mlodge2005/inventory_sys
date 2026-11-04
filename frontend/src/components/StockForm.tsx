@@ -1,6 +1,8 @@
-import { useRef, useState, type FormEvent } from "react";
-import { api, ApiError, itemsQuery } from "../services/api";
-import type { Page, Part } from "../types";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { api, ApiError, itemsQuery, loadDrawers } from "../services/api";
+import type { Page, Part, SlotSummary } from "../types";
+import { DrawerSelect } from "./DrawerSelect";
+import { FieldError } from "./Feedback";
 
 type Action = "ADD" | "REMOVE" | "TRANSFER" | "ADJUST" | "RESTOCK" | "INITIAL_STOCK";
 
@@ -11,6 +13,14 @@ interface Props {
   onDone: () => void;
 }
 
+function wholeNumber(value: string, allowZero: boolean): number | null {
+  if (!/^\d+$/.test(value.trim())) return null;
+  const amount = Number(value);
+  if (!Number.isInteger(amount)) return null;
+  if (amount < 0 || (!allowZero && amount === 0)) return null;
+  return amount;
+}
+
 export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", onDone }: Props) {
   const lock = useRef(false);
   const [action, setAction] = useState<Action>(presetAction);
@@ -19,10 +29,61 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
   const [partId, setPartId] = useState(presetPartId ?? "");
   const [partQuery, setPartQuery] = useState("");
   const [matches, setMatches] = useState<Part[]>([]);
+  const [selected, setSelected] = useState<Part | null>(null);
+  const [drawers, setDrawers] = useState<SlotSummary[]>([]);
   const [quantity, setQuantity] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    loadDrawers()
+      .then((rows) => {
+        if (live) setDrawers(rows);
+      })
+      .catch((err: unknown) => {
+        if (live) setError(err instanceof ApiError ? err.message : "Could not load drawers.");
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!partId) {
+      setSelected(null);
+      return;
+    }
+    const known = matches.find((part) => part.id === partId);
+    if (known) {
+      setSelected(known);
+      return;
+    }
+    let live = true;
+    api<Part>(`/api/v1/items/${partId}`)
+      .then((part) => {
+        if (live) setSelected(part);
+      })
+      .catch(() => {
+        if (live) setSelected(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [partId, matches]);
+
+  const available = selected?.slots?.find((item) => String(item.slot_number) === slot)?.quantity ?? (selected && slot ? 0 : null);
+  const allowZero = action === "ADJUST";
+  const amount = wholeNumber(quantity, allowZero);
+  const overAvailable = available !== null && amount !== null && (action === "REMOVE" || action === "TRANSFER") && amount > available;
+  const ready =
+    Boolean(slot) &&
+    Boolean(partId) &&
+    amount !== null &&
+    !overAvailable &&
+    (action !== "TRANSFER" || (Boolean(destination) && destination !== slot));
 
   async function findParts() {
     setError(null);
@@ -37,15 +98,12 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    if (lock.current) return;
+    if (lock.current || !ready || amount === null) return;
     lock.current = true;
     setPending(true);
     setError(null);
+    setFieldError(null);
     try {
-      const amount = Number(quantity);
-      if (!Number.isInteger(amount) || amount < 0 || (action !== "ADJUST" && amount <= 0)) {
-        throw new ApiError("Enter a whole number of pieces.", 422, "validation_error");
-      }
       if (action === "TRANSFER") {
         await api("/api/v1/stock/transfer", {
           method: "POST",
@@ -92,7 +150,9 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
       setQuantity("");
       onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "The stock change was not saved.");
+      const message = err instanceof ApiError ? err.message : "The stock change was not saved.";
+      if (err instanceof ApiError && err.field) setFieldError(message);
+      setError(message);
     } finally {
       lock.current = false;
       setPending(false);
@@ -118,15 +178,9 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
             <option value="ADJUST">Set quantity</option>
           </select>
         </label>
-        <label className="field">
-          Drawer
-          <input aria-label="Drawer number" inputMode="numeric" value={slot} onChange={(event) => setSlot(event.target.value)} required />
-        </label>
+        <DrawerSelect label="Drawer number" value={slot} onChange={setSlot} slots={drawers} error={fieldError} />
         {action === "TRANSFER" ? (
-          <label className="field">
-            Destination
-            <input aria-label="Destination drawer" inputMode="numeric" value={destination} onChange={(event) => setDestination(event.target.value)} required />
-          </label>
+          <DrawerSelect label="Destination drawer" value={destination} onChange={setDestination} slots={drawers} exclude={slot ? [slot] : []} />
         ) : null}
         <label className="field">
           Part
@@ -135,8 +189,19 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
         <label className="field">
           {action === "ADJUST" ? "New quantity" : "Quantity"}
           <input aria-label="Quantity" inputMode="numeric" value={quantity} onChange={(event) => setQuantity(event.target.value)} required />
+          <FieldError
+            message={
+              quantity.trim() && amount === null
+                ? allowZero
+                  ? "Enter a whole number of zero or more."
+                  : "Enter a whole number greater than zero."
+                : null
+            }
+          />
+          {overAvailable ? <FieldError message={`Only ${available} are available.`} /> : null}
         </label>
       </div>
+      {available !== null ? <p className="note">Available in this drawer: {available}</p> : null}
       {presetPartId ? null : (
         <div className="stack">
           <div className="row">
@@ -151,14 +216,9 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
           {matches.length ? (
             <div className="actions" role="list">
               {matches.map((part) => (
-                <button
-                  key={part.id}
-                  type="button"
-                  onClick={() => setPartId(part.id)}
-                  aria-pressed={partId === part.id}
-                >
+                <button key={part.id} type="button" onClick={() => setPartId(part.id)} aria-pressed={partId === part.id}>
                   {part.sku ? `${part.sku} — ` : ""}
-                  {part.name}
+                  {part.name} ({part.current_quantity} on hand)
                 </button>
               ))}
             </div>
@@ -169,7 +229,7 @@ export function StockForm({ presetSlot, presetPartId, presetAction = "REMOVE", o
         Reason (optional)
         <input aria-label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} />
       </label>
-      <button className="btn-primary" type="submit" disabled={pending}>
+      <button className="btn-primary" type="submit" disabled={pending || !ready}>
         {pending ? "Saving…" : "Confirm stock change"}
       </button>
     </form>

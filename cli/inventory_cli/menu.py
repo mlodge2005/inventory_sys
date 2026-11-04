@@ -91,11 +91,16 @@ def run_menu(
         except InventoryError as exc:
             service.session.rollback()
             console.print(exc.message)
+            if exc.guidance and exc.guidance not in exc.message:
+                console.print(exc.guidance)
             for match in exc.details.get("matches") or []:
                 console.print(f"  {match.get('sku') or '-'}  {match.get('name')}")
         except ValueError:
             service.session.rollback()
-            console.print("Enter a whole number.")
+            console.print("Enter a whole number greater than zero.")
+        except Exception:
+            service.session.rollback()
+            console.print("Cannot complete that action. Check the values and try again.")
 
 
 def _stock_menu(service: InventoryService, console: Console, ask) -> None:
